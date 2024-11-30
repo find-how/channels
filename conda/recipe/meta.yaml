@@ -1,0 +1,86 @@
+{% set name = "php" %}
+
+package:
+  name: {{ name }}
+  version: {{ version }}
+
+source:
+  url: https://www.php.net/distributions/php-{{ version }}.tar.gz
+  sha256: {% if version == "7.2.34" %}409e11bc6a2c18707dfc44bc61c820ddfd81e17481470f3405ee7822d8379903
+         {% elif version == "7.3.33" %}de24a6494d8f3339c54f89ff5304d7e6dc49d3f6a5665b5f8e67e812a813672f
+         {% elif version == "7.4.33" %}3aef56f23e1a4684ca1c6ee77d2bae24d9c0c54a5a17231b52e8816f1058cac7
+         {% elif version == "8.0.30" %}c157e3aad153a8a9b95efb5caef69831da15b84c8571c15c7dc5f587f93dd73a
+         {% elif version == "8.1.27" %}479e65c3f05714d4aace1370e617d78e49e996ec7a7579b8f13efc05cbedb463
+         {% elif version == "8.2.17" %}98cab58662cb66a382d79932fdcb5f92f63858227f3dbf9325be836aa3fca4b8
+         {% endif %}
+
+build:
+  number: 0
+  detect_binary_files_with_prefix: true
+  features:
+    - vc14  # [win]
+
+requirements:
+  build:
+    - vs2019_win-64  # [win]
+    - windows-sdk_win-64  # [win]
+    - {{ compiler('c') }}  # [not win]
+    - {{ compiler('cxx') }}  # [not win]
+    - autoconf  # [not win]
+    - automake  # [not win]
+    - libtool  # [not win]
+    - pkg-config
+    - make  # [not win]
+    - cmake  # [win]
+    - bison
+    - re2c
+    - perl  # [win]
+    - nasm  # [win]
+  host:
+    - openssl
+    - curl
+    - zlib
+    - libxml2
+    - icu
+    - oniguruma
+    - libzip
+    - libsqlite
+    - libxslt  # [not win]
+    - krb5  # [not win]
+    - readline  # [not win]
+  run:
+    - openssl
+    - curl
+    - zlib
+    - libxml2
+    - icu
+    - oniguruma
+    - libzip
+    - libsqlite
+    - libxslt  # [not win]
+    - krb5  # [not win]
+    - readline  # [not win]
+
+test:
+  commands:
+    - php --version
+    - php -m
+    - if not exist %LIBRARY_BIN%\php.exe exit 1  # [win]
+    - test -f $PREFIX/bin/php  # [not win]
+
+about:
+  home: https://www.php.net/
+  license: PHP-3.01
+  license_family: OTHER
+  license_file: LICENSE
+  summary: PHP is a popular general-purpose scripting language
+  description: |
+    PHP is a popular general-purpose scripting language that is especially suited 
+    to web development. Fast, flexible and pragmatic, PHP powers everything from 
+    your blog to the most popular websites in the world.
+  doc_url: https://www.php.net/docs.php
+  dev_url: https://github.com/php/php-src
+
+extra:
+  recipe-maintainers:
+    - find-how
