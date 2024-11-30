@@ -1,3 +1,21 @@
+#!/bin/bash
+
+# Check if repository path is provided
+if [ -z "$1" ]; then
+    echo "Usage: $0 <repository-path>"
+    exit 1
+fi
+
+REPO_PATH="$1"
+
+# Check if the repository exists
+if [ ! -d "$REPO_PATH" ]; then
+    echo "Repository directory does not exist: $REPO_PATH"
+    exit 1
+fi
+
+# Update meta.yaml with new requirements and configurations
+cat > "$REPO_PATH/conda/recipe/meta.yaml" << 'EOF'
 {% set name = "php" %}
 
 package:
@@ -142,3 +160,47 @@ about:
 extra:
   recipe-maintainers:
     - find-how
+EOF
+
+# Create post-link script
+mkdir -p "$REPO_PATH/conda/recipe/post-link"
+cat > "$REPO_PATH/conda/recipe/post-link/post-link.sh" << 'EOF'
+#!/bin/bash
+
+# Create configuration directories
+mkdir -p $PREFIX/etc/php/conf.d
+
+# Copy default php.ini
+if [ -f $PREFIX/php.ini-production ]; then
+    cp $PREFIX/php.ini-production $PREFIX/etc/php/php.ini
+fi
+EOF
+
+chmod +x "$REPO_PATH/conda/recipe/post-link/post-link.sh"
+
+# Update .github/workflows/php-build.yml to add conda-forge channel
+sed -i 's/conda install conda-build conda-verify -y/conda install conda-build conda-verify -y -c conda-forge/' "$REPO_PATH/.github/workflows/php-build.yml"
+
+# Add build caching to workflow
+sed -i '/steps:/a\    - name: Cache conda packages\n      uses: actions/cache@v3\n      with:\n        path: ~/conda_pkgs_dir\n        key: ${{ runner.os }}-conda-${{ matrix.platform.name }}-${{ matrix.php-version }}-${{ hashFiles('\''conda/recipe/meta.yaml'\'') }}\n        restore-keys: |\n          ${{ runner.os }}-conda-${{ matrix.platform.name }}-${{ matrix.php-version }}-\n          ${{ runner.os }}-conda-${{ matrix.platform.name }}-\n          ${{ runner.os }}-conda-' "$REPO_PATH/.github/workflows/php-build.yml"
+
+# Add error handling to build step
+sed -i '/conda build/i\        set -e' "$REPO_PATH/.github/workflows/php-build.yml"
+
+echo "Repository updated successfully at $REPO_PATH"
+echo "Changes made:"
+echo "1. Updated meta.yaml with new dependencies and build configurations"
+echo "2. Added post-link script for PHP configuration"
+echo "3. Added conda-forge channel to workflow"
+echo "4. Added build caching to workflow"
+echo "5. Added error handling to build steps"
+echo ""
+echo "Next steps:"
+echo "1. Review changes"
+echo "2. Test build locally if possible"
+echo "3. Commit and push changes"
+echo "4. Monitor GitHub Actions build"
+EOF
+
+# Make script executable
+chmod +x update-repo-script.sh
