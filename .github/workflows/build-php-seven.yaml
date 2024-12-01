@@ -1,0 +1,106 @@
+name: Build PHP
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  prepare-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        shell: bash
+        run: |
+          echo 'matrix=[
+            {"version": "7.2.34", "os": "ubuntu-latest", "rattler-build-version": ""},
+            {"version": "7.2.34", "os": "macos-13", "rattler-build-version": ""},
+            {"version": "7.2.34", "os": "macos-latest", "rattler-build-version": ""},
+            {"version": "7.2.34", "os": "windows-latest", "rattler-build-version": ""},
+            {"version": "7.3.33", "os": "ubuntu-latest", "rattler-build-version": ""},
+            {"version": "7.3.33", "os": "macos-13", "rattler-build-version": ""},
+            {"version": "7.3.33", "os": "macos-latest", "rattler-build-version": ""},
+            {"version": "7.3.33", "os": "windows-latest", "rattler-build-version": ""}
+          ]' >> $GITHUB_OUTPUT
+
+  build:
+    needs: prepare-matrix
+    name: Build PHP ${{ matrix.version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare-matrix.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Create recipe
+        shell: bash
+        run: |
+          mkdir -p recipe
+          cat > recipe/recipe.yaml << 'EOF'
+          package:
+            name: php
+            version: ${{ matrix.version }}
+          
+          source:
+            url: https://www.php.net/distributions/php-${{ matrix.version }}.tar.gz
+          
+          build:
+            script: |
+              ./configure \
+                --prefix=$PREFIX \
+                --enable-mbstring \
+                --with-openssl \
+                --with-sqlite3 \
+                --with-zlib \
+                --with-curl
+              make -j$CPU_COUNT
+              make install
+          
+          requirements:
+            build:
+              - {{ compiler('c') }}
+              - {{ compiler('cxx') }}
+              - autoconf
+              - automake
+              - libtool
+              - pkg-config
+              - re2c
+              - bison
+              - make
+              - perl    # [not win]
+            host:
+              - openssl
+              - libxml2
+              - zlib
+              - readline  # [not win]
+              - sqlite
+              - curl
+              - icu
+              - oniguruma
+            run:
+              - openssl
+              - libxml2
+              - zlib
+              - readline  # [not win]
+              - sqlite
+              - curl
+              - icu
+              - oniguruma
+          
+          test:
+            commands:
+              - php --version
+          EOF
+
+      - name: Build package
+        uses: prefix-dev/rattler-build-action@v0.2.21
+        with:
+          recipe-path: recipe/recipe.yaml
+          rattler-build-version: ${{ matrix.rattler-build-version }}
+          artifact-name: php-${{ matrix.version }}-${{ matrix.os }}-${{ matrix.rattler-build-version }}
