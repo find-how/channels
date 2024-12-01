@@ -1,0 +1,58 @@
+name: Build Multi-Platform PHP with Rattler and Pixi
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  setup-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      # Step 1: Checkout Code
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      # Step 2: Set up QEMU for Multi-Arch Builds
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      # Step 3: Set up Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      # Step 4: Install Rattler
+      - name: Install Rattler and Pixi
+        run: |
+          curl -fsSL https://rattler.dev/install.sh | bash
+          export PATH=$HOME/.rattler/bin:$PATH
+          rattler init
+          pixi init
+
+      # Step 5: Configure Environment (Pixi)
+      - name: Configure Environment with Pixi
+        run: |
+          pixi add gcc make zlib-dev openssl-dev curl-dev
+          pixi lock --platform linux-64
+          pixi export -o pixi-environment.yaml
+
+      # Step 6: Build Multi-Arch Docker Image
+      - name: Build Multi-Platform PHP Docker Image
+        run: |
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --build-arg Rattler_ENV=pixi-environment.yaml \
+            -t your-dockerhub-user/php:8.x \
+            --push .
+
+  test-images:
+    runs-on: ubuntu-latest
+    needs: setup-and-build
+    steps:
+      - name: Pull Built Docker Images
+        run: |
+          docker pull your-dockerhub-user/php:8.x
+
+      - name: Test Docker Images
+        run: |
+          docker run --rm your-dockerhub-user/php:8.x php -v
