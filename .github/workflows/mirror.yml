@@ -1,0 +1,172 @@
+name: Channel Setup and Package Mirroring
+
+on:
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: 'Packages to mirror (empty for all)'
+        required: false
+        type: string
+      force_update:
+        description: 'Force update existing packages'
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly updates
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+env:
+  CHANNEL_URL: "https://find-how.github.io/channels"
+  PACKAGES: |
+    {
+      "nodejs": ["21.7.1", "20.11.1", "18.19.1"],
+      "mysql": ["8.0.36"],
+      "redis-server": ["7.2.4"],
+      "meilisearch": ["1.7.3"],
+      "mongodb": ["7.0.5"],
+      "minio-server": ["2024.3.5"]
+    }
+
+jobs:
+  setup-channel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup gh-pages branch
+        run: |
+          # Check if gh-pages exists
+          if ! git ls-remote --heads origin gh-pages; then
+            git checkout --orphan gh-pages
+            git rm -rf .
+            echo "# Find How Channel" > README.md
+            git add README.md
+            git config --global user.email "github-actions[bot]@users.noreply.github.com"
+            git config --global user.name "github-actions[bot]"
+            git commit -m "Initial gh-pages commit"
+            git push origin gh-pages
+          fi
+          git checkout main
+
+      - name: Setup Conda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          channels: conda-forge
+          miniforge-variant: Mambaforge
+          use-mamba: true
+
+      - name: Create package list
+        id: package-list
+        run: |
+          if [[ -n "${{ github.event.inputs.packages }}" ]]; then
+            echo "packages=${{ github.event.inputs.packages }}" >> $GITHUB_OUTPUT
+          else
+            echo "packages=$(echo '${{ env.PACKAGES }}' | jq -r 'keys[]' | tr '\n' ' ')" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download packages
+        run: |
+          mkdir -p temp
+          cd temp
+          
+          # Parse packages JSON
+          PACKAGES_JSON='${{ env.PACKAGES }}'
+          PLATFORMS=("linux-64" "osx-64" "osx-arm64" "win-64")
+          
+          for pkg in ${{ steps.package-list.outputs.packages }}; do
+            versions=$(echo $PACKAGES_JSON | jq -r --arg pkg "$pkg" '.[$pkg][]')
+            for version in $versions; do
+              echo "Processing $pkg=$version"
+              for platform in "${PLATFORMS[@]}"; do
+                echo "Downloading for $platform..."
+                mamba download -c conda-forge "$pkg=$version" --platform "$platform" || \
+                  echo "Failed to download $pkg=$version for $platform"
+              done
+            done
+          done
+
+      - name: Setup channel structure
+        run: |
+          mkdir -p channel
+          cp temp/*.tar.bz2 channel/ 2>/dev/null || true
+          cp temp/*.conda channel/ 2>/dev/null || true
+
+      - name: Index channel
+        run: |
+          mamba index channel/
+
+      - name: Generate channel info
+        run: |
+          cat > channel/README.md << 'EOF'
+          # Find How Channel
+
+          Conda-compatible channel providing development services.
+
+          ## Usage
+
+          ```bash
+          # Add channel
+          mamba config --add channels https://find-how.github.io/channels
+          
+          # Install packages
+          mamba install mysql redis-server nodejs
+          
+          # Install specific versions
+          mamba install nodejs=20.11.1
+          ```
+
+          ## Available Packages
+          EOF
+
+          echo -e "\n### Packages and Versions\n" >> channel/README.md
+          
+          for pkg in $(ls channel/ | grep -oE '^[^-]+' | sort -u); do
+            echo "- $pkg" >> channel/README.md
+            versions=$(ls channel/ | grep "^$pkg-" | cut -d'-' -f2 | sort -u)
+            for version in $versions; do
+              echo "  - $version" >> channel/README.md
+            done
+          done
+
+          echo -e "\n### Supported Platforms\n" >> channel/README.md
+          echo "- linux-64" >> channel/README.md
+          echo "- osx-64" >> channel/README.md
+          echo "- osx-arm64" >> channel/README.md
+          echo "- win-64" >> channel/README.md
+
+          echo -e "\n### Update Frequency\n" >> channel/README.md
+          echo "Packages are updated weekly with the latest versions from conda-forge." >> channel/README.md
+
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: channel
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Update main branch README
+        run: |
+          cp channel/README.md README.md
+          git add README.md
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git commit -m "docs: update channel documentation [skip ci]" || true
+          git push origin main || true
+
+      - name: Channel status
+        run: |
+          echo "Channel URL: ${{ env.CHANNEL_URL }}"
+          echo "Available packages:"
+          ls -l channel/
+          echo "Channel size: $(du -sh channel/)"
