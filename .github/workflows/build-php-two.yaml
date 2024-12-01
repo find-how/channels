@@ -1,0 +1,166 @@
+name: Build PHP
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CONDA_SOLVER: libmamba
+
+jobs:
+  prepare-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          echo "matrix={
+            \"php-version\": [\"7.2.34\", \"7.3.33\", \"7.4.33\", \"8.0.30\", \"8.1.27\", \"8.2.17\"],
+            \"os\": [\"ubuntu-latest\", \"windows-latest\", \"macos-latest\"],
+            \"arch\": [\"x64\", \"arm64\"],
+            \"include\": [
+              {\"os\": \"ubuntu-latest\", \"arch\": \"x64\", \"target\": \"linux-64\"},
+              {\"os\": \"ubuntu-latest\", \"arch\": \"arm64\", \"target\": \"linux-aarch64\"},
+              {\"os\": \"windows-latest\", \"arch\": \"x64\", \"target\": \"win-64\"},
+              {\"os\": \"macos-latest\", \"arch\": \"x64\", \"target\": \"osx-64\"},
+              {\"os\": \"macos-latest\", \"arch\": \"arm64\", \"target\": \"osx-arm64\"}
+            ],
+            \"exclude\": [
+              {\"os\": \"windows-latest\", \"arch\": \"arm64\"}
+            ]
+          }" >> $GITHUB_OUTPUT
+
+  build:
+    needs: prepare-matrix
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare-matrix.outputs.matrix) }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install Conda
+      uses: conda-incubator/setup-miniconda@v3
+      with:
+        python-version: '3.10'
+        channels: conda-forge,defaults
+        channel-priority: strict
+        activate-environment: build-env
+        auto-activate-base: false
+
+    - name: Install conda-build
+      run: |
+        conda install -n build-env conda-build conda-libmamba-solver pip
+
+    - name: Setup QEMU (for ARM builds)
+      if: contains(matrix.target, 'aarch64')
+      uses: docker/setup-qemu-action@v3
+      with:
+        platforms: arm64
+
+    - name: Create build directory
+      run: mkdir -p build
+
+    - name: Generate meta.yaml
+      run: |
+        cat > build/meta.yaml << 'EOF'
+        {% set version = "${{ matrix.php-version }}" %}
+        
+        package:
+          name: php
+          version: {{ version }}
+        
+        source:
+          url: https://www.php.net/distributions/php-{{ version }}.tar.gz
+        
+        build:
+          number: 0
+          skip: true  # [py<37]
+        
+        requirements:
+          build:
+            - {{ compiler('c') }}
+            - {{ compiler('cxx') }}
+            - autoconf
+            - automake
+            - libtool
+            - pkg-config
+            - re2c
+            - bison
+            - make
+            - perl  # [not win]
+          host:
+            - openssl
+            - libxml2
+            - zlib
+            - readline  # [not win]
+            - libsqlite
+            - curl
+            - icu
+            - oniguruma
+          run:
+            - openssl
+            - libxml2
+            - zlib
+            - readline  # [not win]
+            - libsqlite
+            - curl
+            - icu
+            - oniguruma
+        
+        test:
+          commands:
+            - php --version
+        
+        about:
+          home: https://www.php.net/
+          license: PHP-3.01
+          license_family: PHP
+          license_file: LICENSE
+          summary: PHP is a popular general-purpose scripting language
+        EOF
+
+    - name: Configure conda for cross-compilation
+      if: contains(matrix.target, 'aarch64')
+      run: |
+        conda config --write-default
+        echo "conda_build:" >> ~/.condarc
+        echo "  pkg_format: '2'" >> ~/.condarc
+        echo "  error_overlinking: true" >> ~/.condarc
+        echo "  archive_compression_type: xz" >> ~/.condarc
+
+    - name: Build PHP
+      shell: bash -l {0}
+      env:
+        CONDA_SUBDIR: ${{ matrix.target }}
+      run: |
+        conda build build/ \
+          --output-folder dist \
+          --no-anaconda-upload \
+          --no-test \
+          --override-channels \
+          --channel conda-forge \
+          --croot ${{ github.workspace }}/conda-bld
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: php-${{ matrix.php-version }}-${{ matrix.target }}
+        path: dist/${{ matrix.target }}/*.tar.bz2
+
+    - name: Test PHP installation
+      shell: bash -l {0}
+      run: |
+        conda create -n test-env -y
+        conda activate test-env
+        conda install -y --use-local php
+        php --version
