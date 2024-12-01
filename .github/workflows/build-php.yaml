@@ -1,0 +1,55 @@
+name: Build PHP
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: Build PHP ${{ matrix.php-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        php-version: ['8.4.1', '8.3.14', '8.2.26']
+        os: [macos-latest-arm64, macos-latest, ubuntu-latest, windows-latest]
+        include:
+          - os: macos-latest-arm64
+            target: osx-arm64
+          - os: macos-latest
+            target: osx-64
+          - os: ubuntu-latest
+            target: linux-64
+          - os: windows-latest
+            target: win-64
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Rattler
+      uses: prefix-dev/setup-rattler@v0.1.0
+      with:
+        environment-name: build-env
+        
+    - name: Install build dependencies
+      run: |
+        rattler install -n build-env autoconf libtool pkg-config re2c bison
+
+    - name: Download PHP source
+      run: |
+        curl -L https://github.com/php/php-src/archive/php-${{ matrix.php-version }}.tar.gz -o php.tar.gz
+        tar xzf php.tar.gz
+
+    - name: Build PHP
+      working-directory: php-src-php-${{ matrix.php-version }}
+      env:
+        TARGET_PLATFORM: ${{ matrix.target }}
+      run: |
+        ../build.sh
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: php-${{ matrix.php-version }}-${{ matrix.target }}
+        path: php-src-php-${{ matrix.php-version }}/out
